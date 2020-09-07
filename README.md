@@ -11,9 +11,9 @@
 
 # Technologies
 
-  Encfs
-  GnuPG
-  Python3x
+  Encfs <br />
+  GnuPG <br />
+  Python3x <br />
   SQLite
 
 # Environment
