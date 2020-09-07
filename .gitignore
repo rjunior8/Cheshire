@@ -1,0 +1,11 @@
+# created by virtualenv automatically
+bin/
+include/
+lib/
+migrations/
+__pycache__/
+*.pyc
+*.db
+*.log
+*.gpg
+*.cfg
