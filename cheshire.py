@@ -71,23 +71,23 @@ eg = f"""
 
     1º Step - If you don't have gpg installed:
 
-      sudo apt install gnupg
+      $ sudo apt install gnupg
 
     2º Step - Generate a gpg key:
 
-      gpg --full-generate-key
+      $ gpg --full-generate-key
 
     3º Step - Generate 'users' table:
 
-      python {__file__} -ut -r gpg_user
+      $ python {__file__} -ut -r gpg_user
 
     4º Step - Create an user:
 
-      python {__file__} -nu -r gpg_user
+      $ python {__file__} -nu -r gpg_user
 
     5º Step - Generate your table:
 
-      python {__file__} -r [gpg user] -gt -n [table name]
+      $ python {__file__} -gt -r [gpg user] -n [table name]
 
       NOTE: If you don't specify a table name, a 'default' table will be created or searched.
       
@@ -95,49 +95,58 @@ eg = f"""
 
     === Generate tables ===
 
-          python {__file__} -r gpg_user -gt -n my_table
+          $ python {__file__} -gt -r gpg_user -n my_table
 
     === Create user ===
 
-          python {__file__} -nu -r gpg_user
+          $ python {__file__} -nu -r gpg_user
 
     === Add a new platform ===
 
-          python {__file__} -u my_user -r gpg_user -t my_table -ap gmail
+          $ python {__file__} -ap gmail -p -u my_user -r gpg_user -t my_table
 
-          python {__file__} -u my_user -r gpg_user -t my_table -ap gmail -2fa
+          $ python {__file__} -ap gmail -2fa -u my_user -r gpg_user -t my_table
 
-          python {__file__} -u my_user -r gpg_user -t my_table -ap gmail -2fa -sa
+          $ python {__file__} -ap gmail -2fa -sa -u my_user -r gpg_user -t my_table
 
     === Get password ===
 
-          python {__file__} -u my_user -r gpg_user -t my_table -gp gmail
+          $ python {__file__} -gp gmail -u my_user -r gpg_user -t my_table
 
     === Change platform info ===
 
-          python {__file__} -cp -u my_user -r gpg_user -t my_table -pn gmail
+          - To change just password:
 
-          python {__file__} -cp -u my_user -r gpg_user -t my_table -pn gmail -2fa
+              $ python {__file__} -ci -pn gmail -p -u my_user -r gpg_user -t my_table
 
-          python {__file__} -cp -u my_user -r gpg_user -t my_table -pn gmail -2fa -sa
+          - To change just 2-Factor Authentication password:
+
+              $ python {__file__} -ci -pn gmail -2fa -u my_user -r gpg_user -t my_table
+
+          - To change 2-Factor Authentication password and secret answer:
+
+              $ python {__file__} -ci -pn gmail -2fa -sa -u my_user -r gpg_user -t my_table
 
     === Delete a platform ===
 
-          python {__file__} -u my_user -r gpg_user -t my_table -dp gmail
+          $ python {__file__} -dp gmail -u my_user -r gpg_user -t my_table
 
     === Delete an user ===
 
-          python {__file__} -du -r gpg_user -u my_user
+          $ python {__file__} -du -u my_user -r gpg_user
+
+
 """
 
 ap = argparse.ArgumentParser(prog="Cheshire", description="Passwords Managing", epilog=eg, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("-ut", "--user-table", help="Create 'users' table on database.", action="store_true")
 ap.add_argument("-gt", "--generate-table", help="Create table on database.", action="store_true")
-ap.add_argument("-cp", "--change-password", help="Change platform password.", action="store_true")
+ap.add_argument("-ci", "--change-info", help="Change platform password.", action="store_true")
 ap.add_argument("-nu", "--new-user", help="Create user.", action="store_true")
-ap.add_argument("-2fa", "--2-factor-authentication", help="Store platform with 2-Factor Authentication password.", action="store_true")
+ap.add_argument("-2fa", "--2-factor-authentication", help="Store platform with 2-Factor Authentication password. This parameter can to be used in -ci command to change 2-Factor Authentication password", action="store_true")
 ap.add_argument("-sa", "--secret-answer", help="Store platform with secret answer.", action="store_true")
 ap.add_argument("-du", "--delete-user", help="Delete an user.", action="store_true")
+ap.add_argument("-p", "--passwd", help="Change just password.", action="store_true")
 ap.add_argument("-ap", "--add-platform", help="Add a new platform.")
 ap.add_argument("-gp", "--get-password", help="Get platform password.")
 ap.add_argument("-dp", "--delete-platform", help="Delete a platform.")
@@ -402,7 +411,7 @@ def table_gen(gpg_user, tablename="default"):
       query = f"""
         CREATE TABLE IF NOT EXISTS `{tablename}` 
         (`id` INTEGER PRIMARY KEY NOT NULL, 
-        `platform` VARCHAR(50), 
+        `platform` VARCHAR(50) UNIQUE, 
         `password` VARCHAR(50), 
         `Zfa_password` VARCHAR(50), 
         `secret_answer` VARCHAR(300), 
@@ -430,10 +439,14 @@ def table_gen(gpg_user, tablename="default"):
     except Exception as e:
       sys.exit(2)
 
-def add_platform(user, gpg_user, platform, Zfa_password, secret_answer, tablename="default"):
+def add_platform(user, gpg_user, platform, passwd, Zfa_password, secret_answer, tablename="default"):
   try:
 
     dn = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    _platform_passwd = ''
+    _Zfa_password = ''
+    _secret_answer = ''
 
     gpg_dec()
 
@@ -453,48 +466,50 @@ def add_platform(user, gpg_user, platform, Zfa_password, secret_answer, tablenam
 
       if pbkdf2_sha512.verify(password_input, user_passwd):
 
-        try:
-          level = int(input("Enter password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
-        except ValueError as e:
-          level = 2
+        if passwd:
 
-        if level >= 1 and level <= 4:
+          try:
+            level = int(input("Enter password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
+          except ValueError as e:
+            level = 2
 
-          platform_passwd = passwdgen(level=level)
+          if level >= 1 and level <= 4:
+            _platform_passwd = passwdgen(level=level)
 
-          if Zfa_password:
-            try:
-              Zfa_password_level = int(input("Enter Two-factor authentication password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
-            except ValueError as e:
-              Zfa_password_level = 2
-            if Zfa_password_level >= 1 and Zfa_password_level <= 4:
-              Zfa_password = passwdgen(level=Zfa_password_level)
-          else:
-            Zfa_password = ''
+        if Zfa_password:
 
-          if not secret_answer:
-            secret_answer = ''
-          else:
-            secret_answer = input("Secret answer: ")
+          try:
+            Zfa_password_level = int(input("Enter Two-factor authentication password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
+          except ValueError as e:
+            Zfa_password_level = 2
 
-          query = f"""
-            INSERT INTO `{tablename}` 
-            (`platform`, `password`, `Zfa_password`, `secret_answer`, `date`, `user_id`) 
-            VALUES 
-            ({_S}, {_S}, {_S}, {_S}, {_S}, {_S})
-          """
-          values = (platform, platform_passwd, Zfa_password, secret_answer, dn, user_id,)
-          c.execute(query, values)
+          if Zfa_password_level >= 1 and Zfa_password_level <= 4:
+            _Zfa_password = passwdgen(level=Zfa_password_level)
 
-          conn.commit()
+        if secret_answer:
+          _secret_answer = input("Secret answer: ")
 
-          print(f"{bcolors.OKGREEN}[✓]{bcolors.ENDC} Platform '{platform}' was added to the table '{tablename}' successfully!")
+        query = f"""
+          INSERT INTO `{tablename}` 
+          (`platform`, `password`, `Zfa_password`, `secret_answer`, `date`, `user_id`) 
+          VALUES 
+          ({_S}, {_S}, {_S}, {_S}, {_S}, {_S})
+        """
+        values = (platform, _platform_passwd, _Zfa_password, _secret_answer, dn, user_id,)
+        c.execute(query, values)
+
+        conn.commit()
+
+        print(f"{bcolors.OKGREEN}[✓]{bcolors.ENDC} Platform '{platform}' was added to the table '{tablename}' successfully!")
 
       else:
         print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Wrong password!")
 
     else:
       print(f"{bcolors.FAIL}[x]{bcolors.ENDC} User not exists!")
+
+  except sqlite3.IntegrityError:
+    print(f"{bcolors.WARNING}[!]{bcolors.ENDC} Platform '{platform}' already exists!")
 
   except sqlite3.OperationalError as e:
     if str(e).__contains__("no such table"):
@@ -518,7 +533,7 @@ def del_platform(user, gpg_user, platform, tablename="default"):
 
     c, conn = connection()
 
-    query = f"SELECT `id` FROM `users` WHERE `username`={_S}"
+    query = f"SELECT `id`, `password` FROM `users` WHERE `username`={_S}"
     values = (user,)
     c.execute(query, values)
     data = c.fetchone()
@@ -526,19 +541,28 @@ def del_platform(user, gpg_user, platform, tablename="default"):
     if data:
 
       user_id = data[0]
+      user_passwd = data[1]
 
-      query = f"DELETE FROM `{tablename}` WHERE `platform`={_S} AND `user_id`={_S}"
-      values = (platform, user_id,)
-      c.execute(query, values)
+      password_input = getpass.getpass(prompt=f'Password for {user}: ', stream=None)
 
-      conn.commit()
+      if pbkdf2_sha512.verify(password_input, user_passwd):
 
-      affected_rows = c.rowcount
+        query = f"DELETE FROM `{tablename}` WHERE `platform`={_S} AND `user_id`={_S}"
+        values = (platform, user_id,)
+        c.execute(query, values)
 
-      if affected_rows:
-        print(f"{bcolors.OKGREEN}[✓]{bcolors.ENDC} Platform '{platform}' was deleted from table '{tablename}' successfully!")
+        conn.commit()
+
+        affected_rows = c.rowcount
+
+        if affected_rows:
+          print(f"{bcolors.OKGREEN}[✓]{bcolors.ENDC} Platform '{platform}' was deleted from table '{tablename}' successfully!")
+        else:
+          print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Platform '{platform}' not exists!")
+          print(f"{bcolors.FAIL}[*]{bcolors.ENDC} Make sure that you're specifying the right table. ")
+
       else:
-        print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Platform '{platform}' not exists!")
+        print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Wrong password!")
 
     else:
       print(f"{bcolors.FAIL}[x]{bcolors.ENDC} User not exists!")
@@ -561,7 +585,7 @@ def get_passwd(user, gpg_user, platform, tablename="default"):
 
     c, conn = connection()
 
-    query = f"SELECT `id` FROM `users` WHERE `username`={_S}"
+    query = f"SELECT `id`, `password` FROM `users` WHERE `username`={_S}"
     values = (user,)
     c.execute(query, values)
     data = c.fetchone()
@@ -569,35 +593,43 @@ def get_passwd(user, gpg_user, platform, tablename="default"):
     if data:
 
       user_id = data[0]
+      user_passwd = data[1]
 
-      query = f"SELECT `password`, `Zfa_password`, `secret_answer`, `date` FROM `{tablename}` WHERE `platform`={_S} AND `user_id`={_S}"
-      values = (platform, user_id,)
-      c.execute(query, values)
-      data = c.fetchone()
+      password_input = getpass.getpass(prompt=f'Password for {user}: ', stream=None)
 
-      if data:
+      if pbkdf2_sha512.verify(password_input, user_passwd):
 
-        password = data[0]
-        Zfa_password = data[1]
-        secret_answer = data[2]
-        old_date = data[3]
+        query = f"SELECT `password`, `Zfa_password`, `secret_answer`, `date` FROM `{tablename}` WHERE `platform`={_S} AND `user_id`={_S}"
+        values = (platform, user_id,)
+        c.execute(query, values)
+        data = c.fetchone()
 
-        print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} Password: {password}")
-        print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} 2fa password: {Zfa_password}")
-        print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} Secret answer: {secret_answer}")
+        if data:
 
-        curr_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+          password = data[0]
+          Zfa_password = data[1]
+          secret_answer = data[2]
+          old_date = data[3]
 
-        d1 = datetime.strptime(old_date, "%Y-%m-%d %H:%M:%S")
-        d2 = datetime.strptime(curr_date, "%Y-%m-%d %H:%M:%S")
+          print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} Password: {password}")
+          print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} 2fa password: {Zfa_password}")
+          print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} Secret answer: {secret_answer}")
 
-        days = abs((d2 - d1).days)
+          curr_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if days > 30:
-          print(f"{bcolors.WARNING}[!]{bcolors.ENDC} Password for {platform} is old. Is recommended to change it.")
+          d1 = datetime.strptime(old_date, "%Y-%m-%d %H:%M:%S")
+          d2 = datetime.strptime(curr_date, "%Y-%m-%d %H:%M:%S")
+
+          days = abs((d2 - d1).days)
+
+          if days > 30:
+            print(f"{bcolors.WARNING}[!]{bcolors.ENDC} Password for {platform} is old. Is recommended to change it.")
+
+        else:
+          print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Platform '{platform}' not exists!")
 
       else:
-        print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Platform '{platform}' not exists!")
+        print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Wrong password!")
 
     else:
       print(f"{bcolors.FAIL}[x]{bcolors.ENDC} User not exists!")
@@ -613,14 +645,14 @@ def get_passwd(user, gpg_user, platform, tablename="default"):
     except Exception as e:
       sys.exit(2)
 
-def change_platform_passwd(user, gpg_user, platform, Zfa_password, secret_answer, tablename="default"):
+def change_platform_passwd(user, gpg_user, platform, passwd, Zfa_password, secret_answer, tablename="default"):
   try:
 
     gpg_dec()
 
     c, conn = connection()
 
-    query = f"SELECT `id` FROM `users` WHERE `username`={_S}"
+    query = f"SELECT `id`, `password` FROM `users` WHERE `username`={_S}"
     values = (user,)
     c.execute(query, values)
     data = c.fetchone()
@@ -628,17 +660,29 @@ def change_platform_passwd(user, gpg_user, platform, Zfa_password, secret_answer
     if data:
 
       user_id = data[0]
+      user_passwd = data[1]
 
-      try:
-        level = int(input("Enter password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
-      except ValueError as e:
-        level = 2
+      password_input = getpass.getpass(prompt=f'Password for {user}: ', stream=None)
 
-      if level >= 1 and level <= 4:
+      if pbkdf2_sha512.verify(password_input, user_passwd):
 
-        new_platform_passwd = passwdgen(level=level)
+        if passwd:
 
-        if Zfa_password and secret_answer:
+          try:
+            level = int(input("Enter password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
+          except ValueError as e:
+            level = 2
+
+          if level >= 1 and level <= 4:
+
+            new_platform_passwd = passwdgen(level=level)
+            query = f"UPDATE `{tablename}` SET `password`={_S} WHERE `platform`={_S} AND `user_id`={_S}"
+            values = (new_platform_passwd, platform, user_id,)
+            c.execute(query, values)
+            conn.commit()
+            affected_rows = c.rowcount
+
+        if Zfa_password:
 
           try:
             Zfa_password_level = int(input("Enter Two-factor authentication password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
@@ -648,79 +692,24 @@ def change_platform_passwd(user, gpg_user, platform, Zfa_password, secret_answer
           if Zfa_password_level >= 1 and Zfa_password_level <= 4:
 
             new_platform_2fa_passwd = passwdgen(level=Zfa_password_level)
+            query = f"UPDATE `{tablename}` SET `Zfa_password`={_S} WHERE `platform`={_S} AND `user_id`={_S}"
+            values = (new_platform_2fa_passwd, platform, user_id,)
+            c.execute(query, values)
+            conn.commit()
+            affected_rows = c.rowcount
 
-            secret_answer = input("New secret answer: ")
-
-            query = f"""
-              UPDATE `{tablename}` 
-              SET 
-              `password`={_S}, 
-              `Zfa_password`={_S}, 
-              `secret_answer`={_S} 
-              WHERE `platform`={_S} 
-              AND 
-              `user_id`={_S}
-            """
-
-            values = (new_platform_passwd, new_platform_2fa_passwd, secret_answer, platform, user_id,)
-
-        elif Zfa_password and not secret_answer:
-
-          try:
-            Zfa_password_level = int(input("Enter Two-factor authentication password level: [1=low | 2=medium | 3=high | 4=super high] [default=2]: "))
-          except ValueError as e:
-            Zfa_password_level = 2
-
-          if Zfa_password_level >= 1 and Zfa_password_level <= 4:
-
-            new_platform_2fa_passwd = passwdgen(level=Zfa_password_level)
-
-            query = f"""
-              UPDATE `{tablename}` 
-              SET 
-              `password`={_S}, 
-              `Zfa_password`={_S}, 
-              WHERE `platform`={_S} 
-              AND 
-              `user_id`={_S}
-            """
-
-            values = (new_platform_passwd, new_platform_2fa_passwd, platform, user_id,)
-
-        elif not Zfa_password and secret_answer:
+        if secret_answer:
 
           secret_answer = input("New secret answer: ")
-
-          query = f"""
-            UPDATE `{tablename}` 
-            SET 
-            `password`={_S}, 
-            `secret_answer`={_S}, 
-            WHERE `platform`={_S} 
-            AND 
-            `user_id`={_S}
-          """
-
-          values = (new_platform_passwd, secret_answer, platform, user_id,)
-
-        else:
-          query = f"""
-            UPDATE `{tablename}` 
-            SET 
-            `password`={_S} 
-            WHERE `platform`={_S} 
-            AND 
-            `user_id`={_S}
-          """
-
-          values = (new_platform_passwd, platform, user_id,)
-
-        c.execute(query, values)
-
-        affected_rows = c.rowcount
+          query = f"UPDATE `{tablename}` SET `secret_answer`={_S} WHERE `platform`={_S} AND `user_id`={_S}"
+          values = (secret_answer, platform, user_id,)
+          c.execute(query, values)
+          conn.commit()
+          affected_rows = c.rowcount
 
         if not affected_rows:
           print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Platform '{platform}' not exists!")
+          print(f"{bcolors.FAIL}[*]{bcolors.ENDC} Make sure that you're specifying the right table. ")
         else:
 
           date_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -739,6 +728,9 @@ def change_platform_passwd(user, gpg_user, platform, Zfa_password, secret_answer
 
           if secret_answer:
             print(f"{bcolors.OKBLUE}[*]{bcolors.ENDC} New secret answer for '{platform}': {secret_answer}")
+
+      else:
+        print(f"{bcolors.FAIL}[x]{bcolors.ENDC} Wrong password!")
 
     else:
       print(f"{bcolors.FAIL}[x]{bcolors.ENDC} User not exists!")
@@ -776,9 +768,16 @@ def main():
               ap.print_help()
               sys.exit(0)
 
-        gpg_user = args["gpg_user"]
+        if args["gpg_user"] == False:
 
-        create_user_table(gpg_user=gpg_user)
+          ap.print_help()
+          sys.exit(0)
+
+        else:
+
+          gpg_user = args["gpg_user"]
+
+          create_user_table(gpg_user=gpg_user)
 
       elif args["new_user"] == True:
         
@@ -788,9 +787,16 @@ def main():
               ap.print_help()
               sys.exit(0)
 
-        gpg_user = args["gpg_user"]
+        if args["gpg_user"] == False:
 
-        add_user(gpg_user=gpg_user)
+          ap.print_help()
+          sys.exit(0)
+
+        else:
+
+          gpg_user = args["gpg_user"]
+
+          add_user(gpg_user=gpg_user)
 
       elif args["generate_table"] == True:
         
@@ -800,39 +806,54 @@ def main():
               ap.print_help()
               sys.exit(0)
 
-        gpg_user = args["gpg_user"]
+        if args["gpg_user"] == False:
 
-        if not args["table_name"] is None:
-          table_gen(gpg_user=gpg_user, tablename=args["table_name"])
-        else:
-          table_gen(gpg_user=gpg_user)
-
-      elif not args["add_platform"] is None:
-        
-        for key in args:
-          if key != "add_platform" and key != "2_factor_authentication" and key != "username" and key != "tablename" and key != "gpg_user" \
-            and key != "secret_answer":
-            if args[key] == True or (not args[key] is None and args[key] != False):
-              ap.print_help()
-              sys.exit(0)
-
-        user = args["username"]
-        gpg_user = args["gpg_user"]
-        tablename = args["tablename"]
-        platform = args["add_platform"]
-        is_2fa = args["2_factor_authentication"]
-        secret_answer = args["secret_answer"]
-
-        if user is None or platform is None:
           ap.print_help()
           sys.exit(0)
 
         else:
 
-          if tablename:
-            add_platform(user=user, gpg_user=gpg_user, platform=platform, Zfa_password=is_2fa, secret_answer=secret_answer, tablename=tablename)
+          gpg_user = args["gpg_user"]
+
+          if not args["table_name"] is None:
+            table_gen(gpg_user=gpg_user, tablename=args["table_name"])
           else:
-            add_platform(user=user, gpg_user=gpg_user, platform=platform, Zfa_password=is_2fa, secret_answer=secret_answer)
+            table_gen(gpg_user=gpg_user)
+
+      elif not args["add_platform"] is None:
+        
+        for key in args:
+          if key != "add_platform" and key != "2_factor_authentication" and key != "username" and key != "tablename" and key != "gpg_user" \
+            and key != "secret_answer" and key != "passwd":
+            if args[key] == True or (not args[key] is None and args[key] != False):
+              ap.print_help()
+              sys.exit(0)
+
+        if args["username"] == False and args["gpg_user"] == False and (args["passwd"] == False and args["2_factor_authentication"] == False and args["secret_answer"] == False):
+
+          ap.print_help()
+          sys.exit(0)
+
+        else:
+
+          user = args["username"]
+          gpg_user = args["gpg_user"]
+          tablename = args["tablename"]
+          platform = args["add_platform"]
+          passwd = args["passwd"]
+          is_2fa = args["2_factor_authentication"]
+          secret_answer = args["secret_answer"]
+
+          if user is None or platform is None:
+            ap.print_help()
+            sys.exit(0)
+
+          else:
+
+            if tablename:
+              add_platform(user=user, gpg_user=gpg_user, platform=platform, Zfa_password=is_2fa, secret_answer=secret_answer, tablename=tablename)
+            else:
+              add_platform(user=user, gpg_user=gpg_user, platform=platform, Zfa_password=is_2fa, secret_answer=secret_answer)
 
       elif not args["get_password"] is None:
 
@@ -842,21 +863,57 @@ def main():
               ap.print_help()
               sys.exit(0)
 
-        user = args["username"]
-        gpg_user = args["gpg_user"]
-        tablename = args["tablename"]
-        platform = args["get_password"]
+        if args["username"] == False and args["gpg_user"] == False:
 
-        if user is None or platform is None:
           ap.print_help()
           sys.exit(0)
 
         else:
 
-          if tablename:
-            get_passwd(user=user, gpg_user=gpg_user, platform=platform, tablename=tablename)
+          user = args["username"]
+          gpg_user = args["gpg_user"]
+          tablename = args["tablename"]
+          platform = args["get_password"]
+
+          if user is None or platform is None:
+            ap.print_help()
+            sys.exit(0)
+
           else:
-            get_passwd(user=user, gpg_user=gpg_user, platform=platform)
+
+            if tablename:
+              get_passwd(user=user, gpg_user=gpg_user, platform=platform, tablename=tablename)
+            else:
+              get_passwd(user=user, gpg_user=gpg_user, platform=platform)
+
+      elif args["change_info"] == True:
+
+        for key in args:
+          if key != "change_info" and key != "username" and key != "tablename" and key != "gpg_user" and key != "platform_name" \
+            and key != "2_factor_authentication" and key != "secret_answer" and key != "passwd":
+            if args[key] == True or (not args[key] is None and args[key] != False):
+              ap.print_help()
+              sys.exit(0)
+
+        if args["username"] == False and args["gpg_user"] == False and (args["passwd"] == False and args["2_factor_authentication"] == False and args["secret_answer"] == False):
+
+          ap.print_help()
+          sys.exit(0)
+
+        else:
+
+          user = args["username"]
+          gpg_user = args["gpg_user"]
+          tablename = args["tablename"]
+          platform = args["platform_name"]
+          passwd = args["passwd"]
+          is_2fa = args["2_factor_authentication"]
+          secret_answer = args["secret_answer"]
+
+          if tablename:
+            change_platform_passwd(user=user, gpg_user=gpg_user, platform=platform, passwd=passwd, Zfa_password=is_2fa, secret_answer=secret_answer, tablename=tablename)
+          else:
+            change_platform_passwd(user=user, gpg_user=gpg_user, platform=platform, passwd=passwd, Zfa_password=is_2fa, secret_answer=secret_answer)
 
       elif not args["delete_platform"] is None:
 
@@ -866,36 +923,22 @@ def main():
               ap.print_help()
               sys.exit(0)
 
-        user = args["username"]
-        gpg_user = args["gpg_user"]
-        tablename = args["tablename"]
-        platform = args["delete_platform"]
+        if args["username"] == False and args["gpg_user"] == False:
 
-        if tablename:
-          del_platform(user=user, gpg_user=gpg_user, tablename=tablename, platform=platform)
+          ap.print_help()
+          sys.exit(0)
+
         else:
-          del_platform(user=user, gpg_user=gpg_user, platform=platform)
 
-      elif args["change_password"] == True:
+          user = args["username"]
+          gpg_user = args["gpg_user"]
+          tablename = args["tablename"]
+          platform = args["delete_platform"]
 
-        for key in args:
-          if key != "change_password" and key != "username" and key != "tablename" and key != "gpg_user" and key != "platform_name" \
-            and key != "2_factor_authentication" and key != "secret_answer":
-            if args[key] == True or (not args[key] is None and args[key] != False):
-              ap.print_help()
-              sys.exit(0)
-
-        user = args["username"]
-        gpg_user = args["gpg_user"]
-        tablename = args["tablename"]
-        platform = args["platform_name"]
-        is_2fa = args["2_factor_authentication"]
-        secret_answer = args["secret_answer"]
-
-        if tablename:
-          change_platform_passwd(user=user, gpg_user=gpg_user, platform=platform, Zfa_password=is_2fa, secret_answer=secret_answer, tablename=tablename)
-        else:
-          change_platform_passwd(user=user, gpg_user=gpg_user, platform=platform, Zfa_password=is_2fa, secret_answer=secret_answer)
+          if tablename:
+            del_platform(user=user, gpg_user=gpg_user, tablename=tablename, platform=platform)
+          else:
+            del_platform(user=user, gpg_user=gpg_user, platform=platform)
 
       elif args["delete_user"] == True:
 
@@ -905,10 +948,17 @@ def main():
               ap.print_help()
               sys.exit(0)
 
-        user = args["username"]
-        gpg_user = args["gpg_user"]
+        if args["username"] == False and args["gpg_user"] == False:
 
-        del_user(user=user, gpg_user=gpg_user)
+          ap.print_help()
+          sys.exit(0)
+
+        else:
+
+          user = args["username"]
+          gpg_user = args["gpg_user"]
+
+          del_user(user=user, gpg_user=gpg_user)
 
       else:
         ap.print_help()
